@@ -10,7 +10,7 @@ const app = express();
 /* -------------------- MIDDLEWARE -------------------- */
 app.use(
   cors({
-    origin: "https://react-frontend-phi-six.vercel.app", // your Vercel frontend
+    origin: process.env.FRONTEND_URL,
     credentials: true,
   })
 );
@@ -47,7 +47,7 @@ const sendEmail = async (to, subject, text) => {
 
 /* -------------------- HEALTH CHECK -------------------- */
 app.get("/", (req, res) => {
-  res.send("Backend running successfully");
+  res.send("✅ Backend running successfully");
 });
 
 /* -------------------- CREATE APPLICATION -------------------- */
@@ -57,6 +57,7 @@ app.post("/api/application", async (req, res) => {
   try {
     const data = req.body;
 
+    // basic validation
     if (
       !data?.personal?.fullName ||
       !data?.personal?.pan ||
@@ -96,7 +97,10 @@ Your application has been submitted successfully.
 Application ID: ${applicationId}`
     );
 
-    res.status(201).json({ success: true, applicationId });
+    res.status(201).json({
+      success: true,
+      applicationId,
+    });
   } catch (err) {
     if (client) await client.query("ROLLBACK");
     console.error(err);
