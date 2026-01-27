@@ -1,13 +1,15 @@
-require("dotenv").config();
-const { Pool } = require("pg");
+// db.js
+const { Pool } = require('pg');
 
+// Create a pool of connections to the Supabase database
 const pool = new Pool({
-  user: process.env.DB_USER,
-  host: process.env.DB_HOST,
-  database: process.env.DB_NAME,
-  password: process.env.DB_PASS,
-  port: process.env.DB_PORT || 5432,
-  ssl: process.env.DB_HOST !== "localhost" ? { rejectUnauthorized: false } : false
+  user: 'postgres', // your DB username
+  host: 'db.qaitilcppvcimfnthlrb.supabase.co', // your DB host
+  database: 'postgres', // your DB name
+  password: process.env.DB_PASSWORD, // store your password in environment variable
+  port: 5432, // default Postgres port
+  ssl: { rejectUnauthorized: false }, // required for Supabase
 });
 
+// Export the pool to use in your routes
 module.exports = pool;
