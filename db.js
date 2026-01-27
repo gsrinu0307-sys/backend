@@ -1,4 +1,3 @@
-// db.js
 const { Pool } = require("pg");
 
 const pool = new Pool({
@@ -6,18 +5,19 @@ const pool = new Pool({
   port: Number(process.env.DB_PORT),
   database: process.env.DB_NAME,
   user: process.env.DB_USER,
-  password: process.env.DB_PASS, // ✅ FIXED HERE
+  password: process.env.DB_PASS,
   ssl: { rejectUnauthorized: false },
 });
 
-// Test connection ON START
+// HARD FAIL FAST TEST
 (async () => {
   try {
     const client = await pool.connect();
-    console.log("✅ Supabase DB connected");
+    console.log("✅ DB CONNECTED SUCCESSFULLY");
     client.release();
   } catch (err) {
     console.error("❌ DB connection failed:", err.message);
+    process.exit(1); // 🔥 CRASH if DB wrong
   }
 })();
 
