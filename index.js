@@ -1,241 +1,184 @@
-require("dotenv").config(); // Load .env first
+require("dotenv").config();
 
 const express = require("express");
 const cors = require("cors");
-const pool = require("./db");
 const nodemailer = require("nodemailer");
+const pool = require("./db");
 
 const app = express();
 
-// ------------------ MIDDLEWARE ------------------
-// Allow requests from deployed frontend
-app.use(cors({
-  origin: ["https://gsrinu0307-sys.github.io"] // Your GitHub Pages frontend URL
-}));
+/* -------------------- MIDDLEWARE -------------------- */
+app.use(
+  cors({
+    origin: "https://react-frontend-phi-six.vercel.app", // your Vercel frontend
+    credentials: true,
+  })
+);
+
 app.use(express.json());
 
-// ------------------ EMAIL FUNCTION ------------------
-const sendApplicationEmail = async (toEmail, subject, message) => {
-  try {
-    const transporter = nodemailer.createTransport({
-      service: "gmail",
-      auth: {
-        user: process.env.EMAIL_USER,
-        pass: process.env.EMAIL_PASS,
-      },
-    });
+/* -------------------- EMAIL SETUP -------------------- */
+let transporter = null;
 
+if (process.env.EMAIL_USER && process.env.EMAIL_PASS) {
+  transporter = nodemailer.createTransport({
+    service: "gmail",
+    auth: {
+      user: process.env.EMAIL_USER,
+      pass: process.env.EMAIL_PASS,
+    },
+  });
+}
+
+const sendEmail = async (to, subject, text) => {
+  if (!transporter || !to) return;
+
+  try {
     await transporter.sendMail({
       from: `"Application Team" <${process.env.EMAIL_USER}>`,
-      to: toEmail,
+      to,
       subject,
-      text: message,
+      text,
     });
-
-    console.log("📧 Email sent to:", toEmail);
-  } catch (error) {
-    console.error("❌ Email error:", error.message);
+  } catch (err) {
+    console.error("Email error:", err.message);
   }
 };
 
-// ------------------ TEST ROUTE ------------------
+/* -------------------- HEALTH CHECK -------------------- */
 app.get("/", (req, res) => {
   res.send("Backend running successfully");
 });
 
-// ------------------ CREATE APPLICATION ------------------
+/* -------------------- CREATE APPLICATION -------------------- */
 app.post("/api/application", async (req, res) => {
-  const client = await pool.connect();
+  let client;
 
   try {
-    const formData = req.body;
+    const data = req.body;
 
     if (
-      !formData?.personal?.fullName ||
-      !formData?.personal?.pan ||
-      !formData?.contact?.mobile ||
-      !formData?.contact?.email
+      !data?.personal?.fullName ||
+      !data?.personal?.pan ||
+      !data?.contact?.mobile ||
+      !data?.contact?.email
     ) {
-      return res.status(400).json({
-        success: false,
-        message: "Full Name, PAN, Mobile and Email are required",
-      });
+      return res
+        .status(400)
+        .json({ success: false, message: "Required fields missing" });
     }
 
-    formData.contact.email = formData.contact.email.trim().toLowerCase();
-
+    client = await pool.connect();
     await client.query("BEGIN");
 
-    const insertResult = await client.query(
-      `INSERT INTO applications (application_data)
-       VALUES ($1)
-       RETURNING id`,
-      [formData]
+    const insert = await client.query(
+      "INSERT INTO applications (application_data) VALUES ($1) RETURNING id",
+      [data]
     );
 
-    const dbId = insertResult.rows[0].id;
-    const yearMonth = new Date().toISOString().slice(0, 7).replace("-", "");
-    const applicationId = `APP-${yearMonth}-${String(dbId).padStart(5, "0")}`;
+    const id = insert.rows[0].id;
+    const ym = new Date().toISOString().slice(0, 7).replace("-", "");
+    const applicationId = `APP-${ym}-${String(id).padStart(5, "0")}`;
 
     await client.query(
       "UPDATE applications SET application_id = $1 WHERE id = $2",
-      [applicationId, dbId]
+      [applicationId, id]
     );
 
     await client.query("COMMIT");
 
-    await sendApplicationEmail(
-      formData.contact.email,
+    await sendEmail(
+      data.contact.email,
       "Application Submitted Successfully",
-      `Hello ${formData.personal.fullName},
+      `Hello ${data.personal.fullName},
 
 Your application has been submitted successfully.
-
-Application ID: ${applicationId}
-
-Check your application:
-${process.env.FRONTEND_URL}/application-search/${applicationId}
-
-We will contact you further.
-
-Thank you.`
+Application ID: ${applicationId}`
     );
 
-    res.status(201).json({
-      success: true,
-      message: "Application submitted successfully",
-      id: applicationId,
-    });
-  } catch (error) {
-    await client.query("ROLLBACK");
-    console.error("DB Error:", error);
-
-    if (error.code === "23505") {
-      return res.status(400).json({
-        success: false,
-        message: "Duplicate data not allowed",
-      });
-    }
-
-    res.status(500).json({ success: false, message: "Internal server error" });
+    res.status(201).json({ success: true, applicationId });
+  } catch (err) {
+    if (client) await client.query("ROLLBACK");
+    console.error(err);
+    res.status(500).json({ success: false, message: "Server error" });
   } finally {
-    client.release();
+    if (client) client.release();
   }
 });
 
-// ------------------ READ ALL APPLICATIONS ------------------
+/* -------------------- GET ALL APPLICATIONS -------------------- */
 app.get("/api/applications", async (req, res) => {
   try {
     const result = await pool.query(
       "SELECT application_id, application_data, created_at FROM applications ORDER BY id DESC"
     );
     res.json({ success: true, applications: result.rows });
-  } catch (error) {
-    console.error(error);
-    res.status(500).json({ success: false, message: "Internal server error" });
+  } catch (err) {
+    res.status(500).json({ success: false, message: "Server error" });
   }
 });
 
-// ------------------ READ SINGLE APPLICATION ------------------
-app.get("/api/application/:applicationId", async (req, res) => {
+/* -------------------- GET SINGLE APPLICATION -------------------- */
+app.get("/api/application/:id", async (req, res) => {
   try {
-    const { applicationId } = req.params;
-
     const result = await pool.query(
       "SELECT * FROM applications WHERE application_id = $1",
-      [applicationId]
+      [req.params.id]
     );
 
-    if (result.rows.length === 0) {
-      return res.status(404).json({ success: false, message: "Application not found" });
+    if (!result.rows.length) {
+      return res
+        .status(404)
+        .json({ success: false, message: "Not found" });
     }
 
     res.json({ success: true, application: result.rows[0] });
-  } catch (error) {
-    console.error(error);
-    res.status(500).json({ success: false, message: "Internal server error" });
+  } catch (err) {
+    res.status(500).json({ success: false, message: "Server error" });
   }
 });
 
-// ------------------ UPDATE APPLICATION ------------------
-app.put("/api/application/:applicationId", async (req, res) => {
+/* -------------------- UPDATE APPLICATION -------------------- */
+app.put("/api/application/:id", async (req, res) => {
   try {
-    const { applicationId } = req.params;
-    const updatedData = req.body;
-
     const result = await pool.query(
       "UPDATE applications SET application_data = $1 WHERE application_id = $2 RETURNING *",
-      [updatedData, applicationId]
+      [req.body, req.params.id]
     );
 
-    if (result.rows.length === 0) {
-      return res.status(404).json({ success: false, message: "Application not found" });
+    if (!result.rows.length) {
+      return res
+        .status(404)
+        .json({ success: false, message: "Not found" });
     }
 
-    await sendApplicationEmail(
-      updatedData.contact?.email,
-      "Application Updated Successfully",
-      `Hello ${updatedData.personal?.fullName || ""},
-
-Your application has been updated successfully.
-
-Application ID: ${applicationId}
-
-We will contact you further.
-
-Thank you.`
-    );
-
-    res.json({ success: true, message: "Application updated successfully" });
-  } catch (error) {
-    console.error(error);
-    res.status(500).json({ success: false, message: "Internal server error" });
+    res.json({ success: true, message: "Application updated" });
+  } catch (err) {
+    res.status(500).json({ success: false, message: "Server error" });
   }
 });
 
-// ------------------ DELETE APPLICATION ------------------
-app.delete("/api/application/:applicationId", async (req, res) => {
+/* -------------------- DELETE APPLICATION -------------------- */
+app.delete("/api/application/:id", async (req, res) => {
   try {
-    const { applicationId } = req.params;
-
-    const findResult = await pool.query(
-      "SELECT application_data FROM applications WHERE application_id = $1",
-      [applicationId]
+    const result = await pool.query(
+      "DELETE FROM applications WHERE application_id = $1 RETURNING *",
+      [req.params.id]
     );
 
-    if (findResult.rows.length === 0) {
-      return res.status(404).json({ success: false, message: "Application not found" });
+    if (!result.rows.length) {
+      return res
+        .status(404)
+        .json({ success: false, message: "Not found" });
     }
 
-    const appData = findResult.rows[0].application_data;
-
-    await pool.query(
-      "DELETE FROM applications WHERE application_id = $1",
-      [applicationId]
-    );
-
-    await sendApplicationEmail(
-      appData.contact?.email,
-      "Application Deleted Successfully",
-      `Hello ${appData.personal?.fullName || ""},
-
-Your application has been deleted successfully.
-
-Application ID: ${applicationId}
-
-We will contact you further if required.
-
-Thank you.`
-    );
-
-    res.json({ success: true, message: "Application deleted successfully" });
-  } catch (error) {
-    console.error(error);
-    res.status(500).json({ success: false, message: "Internal server error" });
+    res.json({ success: true, message: "Application deleted" });
+  } catch (err) {
+    res.status(500).json({ success: false, message: "Server error" });
   }
 });
 
-// ------------------ SERVER ------------------
+/* -------------------- SERVER -------------------- */
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => {
   console.log(`🚀 Server running on port ${PORT}`);
