@@ -2,17 +2,18 @@
 const { Pool } = require("pg");
 
 const pool = new Pool({
-  user: process.env.DB_USER,          // postgres
-  host: process.env.DB_HOST,          // Supabase host
-  database: process.env.DB_NAME,      // postgres
-  password: process.env.DB_PASS,      // ✅ fixed env name
-  port: process.env.DB_PORT || 5432,
-  ssl: { rejectUnauthorized: false }, // required for Supabase
+  user: process.env.DB_USER,
+  host: process.env.DB_HOST,
+  database: process.env.DB_NAME,
+  password: process.env.DB_PASS,
+  port: process.env.DB_PORT,
+  ssl: { rejectUnauthorized: false },
 });
 
 pool
   .query("SELECT 1")
-  .then(() => console.log("✅ Database connected"))
-  .catch((err) => console.error("❌ DB connection error:", err.message));
+  .then(() => console.log("✅ Connected via Supabase Session Pooler"))
+  .catch(err => console.error("❌ DB error:", err.message));
 
 module.exports = pool;
+
