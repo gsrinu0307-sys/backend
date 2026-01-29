@@ -1,21 +1,18 @@
-// dotenv only needed locally (safe to keep)
-require("dotenv").config();
-
+require("dotenv").config(); // Only used locally, safe
 const express = require("express");
 const cors = require("cors");
 const nodemailer = require("nodemailer");
-const pool = require("./db");
+const pool = require("./db"); // Your PostgreSQL pool setup
 
 const app = express();
 
 /* -------------------- MIDDLEWARE -------------------- */
 app.use(
   cors({
-    origin: process.env.FRONTEND_URL || "*", // prevent crash
+    origin: process.env.FRONTEND_URL || "*",
     credentials: true,
   })
 );
-
 app.use(express.json());
 
 /* -------------------- EMAIL SETUP -------------------- */
@@ -23,14 +20,19 @@ let transporter = null;
 
 if (process.env.EMAIL_USER && process.env.EMAIL_PASS) {
   transporter = nodemailer.createTransport({
-    service: "gmail",
+    host: "smtp.gmail.com",
+    port: 465,          // SSL port
+    secure: true,       // true for 465, false for 587
     auth: {
       user: process.env.EMAIL_USER,
-      pass: process.env.EMAIL_PASS,
+      pass: process.env.EMAIL_PASS, // 16-character Gmail App Password
+    },
+    tls: {
+      rejectUnauthorized: false,   // allow Render to connect
     },
   });
 
-  transporter.verify((err) => {
+  transporter.verify((err, success) => {
     if (err) {
       console.error("❌ Email config error:", err.message);
     } else {
@@ -38,7 +40,7 @@ if (process.env.EMAIL_USER && process.env.EMAIL_PASS) {
     }
   });
 } else {
-  console.warn("⚠️ EMAIL_USER or EMAIL_PASS not set");
+  console.warn("⚠️ EMAIL_USER or EMAIL_PASS not set in environment variables");
 }
 
 const sendEmail = async (to, subject, text) => {
@@ -51,6 +53,7 @@ const sendEmail = async (to, subject, text) => {
       subject,
       text,
     });
+    console.log(`📧 Email sent to ${to}`);
   } catch (err) {
     console.error("❌ Email send error:", err.message);
   }
@@ -126,6 +129,7 @@ app.get("/api/applications", async (req, res) => {
     );
     res.json({ success: true, applications: result.rows });
   } catch (err) {
+    console.error("❌ Fetch applications error:", err);
     res.status(500).json({ success: false, message: "Server error" });
   }
 });
@@ -144,6 +148,7 @@ app.get("/api/application/:id", async (req, res) => {
 
     res.json({ success: true, application: result.rows[0] });
   } catch (err) {
+    console.error("❌ Fetch single application error:", err);
     res.status(500).json({ success: false, message: "Server error" });
   }
 });
@@ -162,6 +167,7 @@ app.put("/api/application/:id", async (req, res) => {
 
     res.json({ success: true, message: "Application updated" });
   } catch (err) {
+    console.error("❌ Update application error:", err);
     res.status(500).json({ success: false, message: "Server error" });
   }
 });
@@ -180,6 +186,7 @@ app.delete("/api/application/:id", async (req, res) => {
 
     res.json({ success: true, message: "Application deleted" });
   } catch (err) {
+    console.error("❌ Delete application error:", err);
     res.status(500).json({ success: false, message: "Server error" });
   }
 });
