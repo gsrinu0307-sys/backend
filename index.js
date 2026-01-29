@@ -1,3 +1,4 @@
+// dotenv only needed locally (safe to keep)
 require("dotenv").config();
 
 const express = require("express");
@@ -10,7 +11,7 @@ const app = express();
 /* -------------------- MIDDLEWARE -------------------- */
 app.use(
   cors({
-    origin: process.env.FRONTEND_URL,
+    origin: process.env.FRONTEND_URL || "*", // prevent crash
     credentials: true,
   })
 );
@@ -28,6 +29,16 @@ if (process.env.EMAIL_USER && process.env.EMAIL_PASS) {
       pass: process.env.EMAIL_PASS,
     },
   });
+
+  transporter.verify((err) => {
+    if (err) {
+      console.error("❌ Email config error:", err.message);
+    } else {
+      console.log("✅ Email service ready");
+    }
+  });
+} else {
+  console.warn("⚠️ EMAIL_USER or EMAIL_PASS not set");
 }
 
 const sendEmail = async (to, subject, text) => {
@@ -41,7 +52,7 @@ const sendEmail = async (to, subject, text) => {
       text,
     });
   } catch (err) {
-    console.error("Email error:", err.message);
+    console.error("❌ Email send error:", err.message);
   }
 };
 
@@ -57,7 +68,6 @@ app.post("/api/application", async (req, res) => {
   try {
     const data = req.body;
 
-    // basic validation
     if (
       !data?.personal?.fullName ||
       !data?.personal?.pan ||
@@ -88,6 +98,7 @@ app.post("/api/application", async (req, res) => {
 
     await client.query("COMMIT");
 
+    // Send confirmation email
     await sendEmail(
       data.contact.email,
       "Application Submitted Successfully",
@@ -97,13 +108,10 @@ Your application has been submitted successfully.
 Application ID: ${applicationId}`
     );
 
-    res.status(201).json({
-      success: true,
-      applicationId,
-    });
+    res.status(201).json({ success: true, applicationId });
   } catch (err) {
     if (client) await client.query("ROLLBACK");
-    console.error(err);
+    console.error("❌ Application error:", err);
     res.status(500).json({ success: false, message: "Server error" });
   } finally {
     if (client) client.release();
@@ -131,9 +139,7 @@ app.get("/api/application/:id", async (req, res) => {
     );
 
     if (!result.rows.length) {
-      return res
-        .status(404)
-        .json({ success: false, message: "Not found" });
+      return res.status(404).json({ success: false, message: "Not found" });
     }
 
     res.json({ success: true, application: result.rows[0] });
@@ -151,9 +157,7 @@ app.put("/api/application/:id", async (req, res) => {
     );
 
     if (!result.rows.length) {
-      return res
-        .status(404)
-        .json({ success: false, message: "Not found" });
+      return res.status(404).json({ success: false, message: "Not found" });
     }
 
     res.json({ success: true, message: "Application updated" });
@@ -171,9 +175,7 @@ app.delete("/api/application/:id", async (req, res) => {
     );
 
     if (!result.rows.length) {
-      return res
-        .status(404)
-        .json({ success: false, message: "Not found" });
+      return res.status(404).json({ success: false, message: "Not found" });
     }
 
     res.json({ success: true, message: "Application deleted" });
@@ -183,7 +185,7 @@ app.delete("/api/application/:id", async (req, res) => {
 });
 
 /* -------------------- SERVER -------------------- */
-const PORT = process.env.PORT || 5000;
+const PORT = process.env.PORT || 10000;
 app.listen(PORT, () => {
   console.log(`🚀 Server running on port ${PORT}`);
 });
