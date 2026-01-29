@@ -1,51 +1,55 @@
-require("dotenv").config(); // Only used locally, safe
+require("dotenv").config();
 const express = require("express");
 const cors = require("cors");
+const pool = require("./db");
 const nodemailer = require("nodemailer");
-const pool = require("./db"); // Your PostgreSQL pool setup
 
 const app = express();
 
-/* -------------------- MIDDLEWARE -------------------- */
-app.use(
-  cors({
-    origin: process.env.FRONTEND_URL || "*",
-    credentials: true,
-  })
-);
+app.use(cors({ origin: process.env.FRONTEND_URL || "*", credentials: true }));
 app.use(express.json());
 
-/* -------------------- EMAIL SETUP -------------------- */
 let transporter = null;
 
-if (process.env.EMAIL_USER && process.env.EMAIL_PASS) {
-  transporter = nodemailer.createTransport({
-    host: "smtp.gmail.com",
-    port: 465,          // SSL port
-    secure: true,       // true for 465, false for 587
-    auth: {
-      user: process.env.EMAIL_USER,
-      pass: process.env.EMAIL_PASS, // 16-character Gmail App Password
-    },
-    tls: {
-      rejectUnauthorized: false,   // allow Render to connect
-    },
-  });
+const createTransporter = async () => {
+  if (!process.env.EMAIL_USER || !process.env.EMAIL_PASS) return null;
 
-  transporter.verify((err, success) => {
-    if (err) {
-      console.error("❌ Email config error:", err.message);
-    } else {
-      console.log("✅ Email service ready");
+  try {
+    const t = nodemailer.createTransport({
+      host: "smtp.gmail.com",
+      port: 465,
+      secure: true,
+      auth: { user: process.env.EMAIL_USER, pass: process.env.EMAIL_PASS },
+      tls: { rejectUnauthorized: false },
+    });
+    await t.verify();
+    console.log("✅ Email ready on port 465");
+    return t;
+  } catch {
+    try {
+      const t = nodemailer.createTransport({
+        host: "smtp.gmail.com",
+        port: 587,
+        secure: false,
+        auth: { user: process.env.EMAIL_USER, pass: process.env.EMAIL_PASS },
+        tls: { rejectUnauthorized: false },
+      });
+      await t.verify();
+      console.log("✅ Email ready on port 587");
+      return t;
+    } catch (err) {
+      console.error("❌ Email config failed:", err.message);
+      return null;
     }
-  });
-} else {
-  console.warn("⚠️ EMAIL_USER or EMAIL_PASS not set in environment variables");
-}
+  }
+};
+
+(async () => {
+  transporter = await createTransporter();
+})();
 
 const sendEmail = async (to, subject, text) => {
   if (!transporter || !to) return;
-
   try {
     await transporter.sendMail({
       from: `"Application Team" <${process.env.EMAIL_USER}>`,
@@ -53,35 +57,23 @@ const sendEmail = async (to, subject, text) => {
       subject,
       text,
     });
-    console.log(`📧 Email sent to ${to}`);
   } catch (err) {
     console.error("❌ Email send error:", err.message);
   }
-};
-
-/* -------------------- HEALTH CHECK -------------------- */
-app.get("/", (req, res) => {
-  res.send("✅ Backend running successfully");
 });
 
-/* -------------------- CREATE APPLICATION -------------------- */
+// --- Routes ---
+app.get("/", (req, res) => res.send("✅ Backend running"));
+
 app.post("/api/application", async (req, res) => {
+  const data = req.body;
   let client;
 
+  if (!data?.personal?.fullName || !data?.contact?.email) {
+    return res.status(400).json({ success: false, message: "Required fields missing" });
+  }
+
   try {
-    const data = req.body;
-
-    if (
-      !data?.personal?.fullName ||
-      !data?.personal?.pan ||
-      !data?.contact?.mobile ||
-      !data?.contact?.email
-    ) {
-      return res
-        .status(400)
-        .json({ success: false, message: "Required fields missing" });
-    }
-
     client = await pool.connect();
     await client.query("BEGIN");
 
@@ -101,98 +93,21 @@ app.post("/api/application", async (req, res) => {
 
     await client.query("COMMIT");
 
-    // Send confirmation email
     await sendEmail(
       data.contact.email,
       "Application Submitted Successfully",
-      `Hello ${data.personal.fullName},
-
-Your application has been submitted successfully.
-Application ID: ${applicationId}`
+      `Hello ${data.personal.fullName},\nYour application ID: ${applicationId}`
     );
 
     res.status(201).json({ success: true, applicationId });
   } catch (err) {
     if (client) await client.query("ROLLBACK");
-    console.error("❌ Application error:", err);
+    console.error(err);
     res.status(500).json({ success: false, message: "Server error" });
   } finally {
     if (client) client.release();
   }
 });
 
-/* -------------------- GET ALL APPLICATIONS -------------------- */
-app.get("/api/applications", async (req, res) => {
-  try {
-    const result = await pool.query(
-      "SELECT application_id, application_data, created_at FROM applications ORDER BY id DESC"
-    );
-    res.json({ success: true, applications: result.rows });
-  } catch (err) {
-    console.error("❌ Fetch applications error:", err);
-    res.status(500).json({ success: false, message: "Server error" });
-  }
-});
-
-/* -------------------- GET SINGLE APPLICATION -------------------- */
-app.get("/api/application/:id", async (req, res) => {
-  try {
-    const result = await pool.query(
-      "SELECT * FROM applications WHERE application_id = $1",
-      [req.params.id]
-    );
-
-    if (!result.rows.length) {
-      return res.status(404).json({ success: false, message: "Not found" });
-    }
-
-    res.json({ success: true, application: result.rows[0] });
-  } catch (err) {
-    console.error("❌ Fetch single application error:", err);
-    res.status(500).json({ success: false, message: "Server error" });
-  }
-});
-
-/* -------------------- UPDATE APPLICATION -------------------- */
-app.put("/api/application/:id", async (req, res) => {
-  try {
-    const result = await pool.query(
-      "UPDATE applications SET application_data = $1 WHERE application_id = $2 RETURNING *",
-      [req.body, req.params.id]
-    );
-
-    if (!result.rows.length) {
-      return res.status(404).json({ success: false, message: "Not found" });
-    }
-
-    res.json({ success: true, message: "Application updated" });
-  } catch (err) {
-    console.error("❌ Update application error:", err);
-    res.status(500).json({ success: false, message: "Server error" });
-  }
-});
-
-/* -------------------- DELETE APPLICATION -------------------- */
-app.delete("/api/application/:id", async (req, res) => {
-  try {
-    const result = await pool.query(
-      "DELETE FROM applications WHERE application_id = $1 RETURNING *",
-      [req.params.id]
-    );
-
-    if (!result.rows.length) {
-      return res.status(404).json({ success: false, message: "Not found" });
-    }
-
-    res.json({ success: true, message: "Application deleted" });
-  } catch (err) {
-    console.error("❌ Delete application error:", err);
-    res.status(500).json({ success: false, message: "Server error" });
-  }
-});
-
-/* -------------------- SERVER -------------------- */
 const PORT = process.env.PORT || 10000;
-app.listen(PORT, () => {
-  console.log(`🚀 Server running on port ${PORT}`);
-});
+app.listen(PORT, () => console.log(`🚀 Server running on port ${PORT}`));
