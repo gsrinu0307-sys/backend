@@ -1,8 +1,17 @@
 const { Pool } = require("pg");
 
+if (!process.env.DATABASE_URL) {
+  console.error("❌ DATABASE_URL is not set");
+}
+
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
-  ssl: { rejectUnauthorized: false },
+  ssl: {
+    rejectUnauthorized: false, // required for Supabase
+  },
+  max: 5, // safe for Render free tier
+  idleTimeoutMillis: 30000,
+  connectionTimeoutMillis: 10000,
 });
 
 // Safe startup check (does NOT crash Render)
